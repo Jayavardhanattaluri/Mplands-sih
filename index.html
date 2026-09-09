@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MPLADS Sentinel — Anomaly Detection Terminal</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #11161d; --line: #21262d; --fg: #c9d1d9; --dim: #8b949e;
+    --high: #f85149; --medium: #d29922; --low: #3fb950; --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: 'JetBrains Mono', 'Courier New', monospace; font-size: 13px;
+  }
+  header {
+    padding: 14px 18px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 16px; letter-spacing: 1px; }
+  header .src { color: var(--dim); font-size: 11px; }
+  .stats { display: flex; gap: 14px; margin-left: auto; color: var(--dim); font-size: 11px; }
+  .stats b { color: var(--fg); }
+  .controls {
+    display: flex; gap: 10px; padding: 12px 18px; border-bottom: 1px solid var(--line);
+    flex-wrap: wrap; align-items: center;
+  }
+  select, input, button {
+    background: #0b0f14; color: var(--fg); border: 1px solid var(--line);
+    padding: 6px 8px; font-family: inherit; font-size: 12px; border-radius: 3px;
+  }
+  select:focus, input:focus { outline: 1px solid var(--accent); }
+  select:disabled { opacity: .45; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  main { display: grid; grid-template-columns: minmax(340px, 44%) 1fr; height: calc(100vh - 108px); }
+  section { overflow: auto; padding: 12px 18px; }
+  section.left { border-right: 1px solid var(--line); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 0 0 10px; }
+  .mp-card { border: 1px solid var(--line); background: var(--panel); padding: 10px; margin-bottom: 12px; border-radius: 4px; }
+  .mp-card .row { display: flex; justify-content: space-between; gap: 10px; color: var(--dim); }
+  .mp-card b { color: var(--fg); }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 11px; color: var(--dim); font-weight: normal; padding: 6px 6px; border-bottom: 1px solid var(--line); position: sticky; top: -12px; background: var(--bg); }
+  td { padding: 6px 6px; border-bottom: 1px solid #171d25; vertical-align: top; }
+  tr.work { cursor: pointer; }
+  tr.work:hover td { background: #161b22; }
+  tr.work.selected td { background: #1c2330; }
+  .band { padding: 1px 6px; border-radius: 3px; font-size: 11px; border: 1px solid; }
+  .band.high { color: var(--high); border-color: var(--high); }
+  .band.medium { color: var(--medium); border-color: var(--medium); }
+  .band.low { color: var(--low); border-color: var(--low); }
+  .desc { max-width: 340px; }
+  .muted { color: var(--dim); }
+  #terminal { white-space: pre-wrap; line-height: 1.5; }
+  .log-block { border-left: 3px solid var(--line); padding: 6px 10px; margin: 0 0 10px; background: #0b0f14; }
+  .log-block.high { border-color: var(--high); }
+  .log-block.medium { border-color: var(--medium); }
+  .log-block.low { border-color: var(--low); }
+  .log-block .ts { color: var(--dim); }
+  .log-block .lvl.high { color: var(--high); }
+  .log-block .lvl.medium { color: var(--medium); }
+  .log-block .lvl.low { color: var(--low); }
+  .log-block .k { color: var(--accent); }
+  .cursor { display: inline-block; width: 8px; height: 14px; background: var(--low); animation: blink 1s steps(2) infinite; vertical-align: -2px; }
+  @keyframes blink { 50% { opacity: 0 } }
+  .empty { color: var(--dim); padding: 20px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MPLADS SENTINEL</h1>
+  <span class="src">real MPLADS records — Empowered Indian public API</span>
+  <div class="stats" id="stats"></div>
+</header>
+
+<div class="controls">
+  <label class="muted">state</label>
+  <select id="stateSel"><option value="">Loading…</option></select>
+  <label class="muted">MP</label>
+  <select id="mpSel" disabled><option value="">Select a state first</option></select>
+  <input id="search" placeholder="filter works / vendor / id" disabled />
+  <select id="bandSel" disabled>
+    <option value="">All risk bands</option>
+    <option value="high">High</option>
+    <option value="medium">Medium</option>
+    <option value="low">Low</option>
+  </select>
+  <select id="statusSel" disabled>
+    <option value="">All statuses</option>
+    <option value="completed">Completed</option>
+    <option value="recommended">Recommended / open</option>
+  </select>
+  <button id="tailBtn" disabled>▶ tail all alerts for this MP</button>
+</div>
+
+<main>
+  <section class="left">
+    <h2>Projects</h2>
+    <div id="mpCard"></div>
+    <div id="workList"><div class="empty">Pick a state and an MP to load their MPLADS works.</div></div>
+  </section>
+  <section class="right">
+    <h2>Anomaly terminal</h2>
+    <div id="terminal"><div class="empty">Select a project to stream its alerts and risk reasoning.<span class="cursor"></span></div></div>
+    <p class="muted" style="margin-top:24px;font-size:11px;line-height:1.6">
+      rules: late_completion · stalled_work · unusual_spending · vendor_concentration · duplicate_work · overpayment<br />
+      risk_score = 0.4·delay_score + 0.3·spending_score + 0.3·vendor_score — high ≥ 0.7, medium ≥ 0.3, low &lt; 0.3<br />
+      data note: the source publishes recommendation dates only for works that are still open, and no sanctioned-vs-final
+      cost split, so cost-overrun detection is out of scope and the delay signal lands on open works.
+    </p>
+  </section>
+</main>
+
+<script>
+const stateSel = document.getElementById('stateSel');
+const mpSel = document.getElementById('mpSel');
+const search = document.getElementById('search');
+const bandSel = document.getElementById('bandSel');
+const statusSel = document.getElementById('statusSel');
+const tailBtn = document.getElementById('tailBtn');
+const workList = document.getElementById('workList');
+const terminal = document.getElementById('terminal');
+const mpCard = document.getElementById('mpCard');
+
+let index = null, works = [], selected = null, typer = null;
+
+const L = v => '₹' + (Number(v || 0) / 100000).toFixed(2) + ' L';
+const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const stamp = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
+
+fetch('data/index.json').then(r => r.json()).then(idx => {
+  index = idx;
+  const s = idx.stats;
+  document.getElementById('stats').innerHTML = `
+    <span><b>${s.works.toLocaleString('en-IN')}</b> works</span>
+    <span><b>${s.mps}</b> MPs</span>
+    <span><b>${s.states}</b> states/UTs</span>
+    <span><b>${s.alerts.toLocaleString('en-IN')}</b> alerts</span>
+    <span><b>${s.high_risk.toLocaleString('en-IN')}</b> high risk</span>
+    <span><b>₹${(s.total_amount / 1e7).toFixed(0)} Cr</b> tracked</span>`;
+  stateSel.innerHTML = '<option value="">Select state…</option>' +
+    Object.keys(idx.states).map(s => `<option>${esc(s)}</option>`).join('');
+}).catch(() => {
+  workList.innerHTML = '<div class="empty">data/index.json not found — run the pipeline scripts first.</div>';
+});
+
+stateSel.onchange = () => {
+  const mps = index.states[stateSel.value] || [];
+  mpSel.disabled = !mps.length;
+  mpSel.innerHTML = '<option value="">Select MP…</option>' + mps.map(m =>
+    `<option value="${m.mp_id}">${esc(m.mp_name)} — ${esc(m.constituency)} (${m.works} works, ${m.high_risk} high risk)</option>`
+  ).join('');
+  mpCard.innerHTML = ''; works = []; selected = null;
+  workList.innerHTML = '<div class="empty">Select an MP.</div>';
+  [search, bandSel, statusSel, tailBtn].forEach(e => e.disabled = true);
+};
+
+mpSel.onchange = () => {
+  if (!mpSel.value) return;
+  const meta = index.states[stateSel.value].find(m => m.mp_id === mpSel.value);
+  mpCard.innerHTML = `<div class="mp-card">
+      <div class="row"><b>${esc(meta.mp_name)}</b><span>${esc(meta.constituency)}, ${esc(meta.state)}</span></div>
+      <div class="row"><span>works</span><b>${meta.works}</b></div>
+      <div class="row"><span>completed</span><b>${meta.completed}</b></div>
+      <div class="row"><span>value tracked</span><b>${L(meta.total_amount)}</b></div>
+      <div class="row"><span>risk</span><b><span class="band high">${meta.high_risk} high</span> <span class="band medium">${meta.medium_risk} medium</span></b></div>
+      <div class="row"><span>alerts raised</span><b>${meta.alerts}</b></div>
+    </div>`;
+  workList.innerHTML = '<div class="empty">Loading works…</div>';
+  fetch(`data/works/${mpSel.value}.json`).then(r => r.json()).then(rows => {
+    works = rows;
+    [search, bandSel, statusSel, tailBtn].forEach(e => e.disabled = false);
+    renderWorks();
+  });
+};
+
+[search, bandSel, statusSel].forEach(el => el.oninput = el.onchange = renderWorks);
+
+function filtered() {
+  const q = search.value.toLowerCase();
+  return works.filter(w =>
+    (!bandSel.value || w.risk_band === bandSel.value) &&
+    (!statusSel.value || w.status === statusSel.value) &&
+    (!q || `${w.work_id} ${w.description} ${w.vendor} ${w.category}`.toLowerCase().includes(q)));
+}
+
+function renderWorks() {
+  const rows = filtered();
+  if (!rows.length) { workList.innerHTML = '<div class="empty">No works match the filters.</div>'; return; }
+  workList.innerHTML = `<table><thead><tr>
+      <th>risk</th><th>work id</th><th>project</th><th>status</th><th>amount</th><th>alerts</th></tr></thead><tbody>
+    ${rows.map(w => `<tr class="work ${selected && selected.work_id === w.work_id ? 'selected' : ''}" data-id="${w.work_id}">
+      <td><span class="band ${w.risk_band}">${w.risk_score.toFixed(3)}</span></td>
+      <td class="muted">${esc(w.work_id)}</td>
+      <td class="desc">${esc(w.description).slice(0, 110)}<div class="muted">${esc(w.vendor)}</div></td>
+      <td class="muted">${esc(w.status)}<div>${esc(w.completed_date || w.recommended_date || '—')}</div></td>
+      <td>${L(w.amount)}</td>
+      <td>${w.alerts.length || '<span class="muted">0</span>'}</td>
+    </tr>`).join('')}</tbody></table>`;
+  workList.querySelectorAll('tr.work').forEach(tr => tr.onclick = () => {
+    selected = works.find(w => w.work_id === tr.dataset.id);
+    renderWorks();
+    streamWork(selected);
+  });
+}
+
+function workBlocks(w) {
+  const blocks = [];
+  const head = a => `[${stamp()}] <span class="lvl ${w.risk_band}">ALERT: ${a.severity.toUpperCase()} RISK</span> — Work ID: ${esc(w.work_id)}
+  <span class="k">Reason:</span> ${esc(a.reason)}
+  <span class="k">MP:</span> ${esc(w.mp_name)}, <span class="k">Constituency:</span> ${esc(w.constituency)}
+  <span class="k">Amount:</span> ${L(w.amount)}, <span class="k">Vendor:</span> ${esc(w.vendor)}`;
+  if (w.alerts.length) w.alerts.forEach(a => blocks.push({ band: a.severity, html: head(a) }));
+  else blocks.push({ band: 'low', html:
+`[${stamp()}] <span class="lvl low">CLEAR</span> — Work ID: ${esc(w.work_id)}
+  <span class="k">Reason:</span> No rule triggered for this work
+  <span class="k">MP:</span> ${esc(w.mp_name)}, <span class="k">Constituency:</span> ${esc(w.constituency)}
+  <span class="k">Amount:</span> ${L(w.amount)}, <span class="k">Vendor:</span> ${esc(w.vendor)}` });
+
+  blocks.push({ band: w.risk_band, html:
+`[${stamp()}] <span class="lvl ${w.risk_band}">RISK SCORE ${w.risk_score.toFixed(3)} (${w.risk_band.toUpperCase()})</span> — Work ID: ${esc(w.work_id)}
+  <span class="k">Project:</span> ${esc(w.description)}
+  <span class="k">Timeline:</span> recommended ${esc(w.recommended_date || 'n/a')} → ${w.completed_date ? 'completed ' + esc(w.completed_date) : 'not completed'}${w.elapsed_days != null ? ' (' + w.elapsed_days + ' days)' : ''}
+  <span class="k">delay_score  (0.4):</span> ${w.delay_score.toFixed(3)} — ${esc(w.reasoning.delay)}
+  <span class="k">spending_score(0.3):</span> ${w.spending_score.toFixed(3)} — ${esc(w.reasoning.spending)}
+  <span class="k">vendor_score  (0.3):</span> ${w.vendor_score.toFixed(3)} — ${esc(w.reasoning.vendor)}
+  <span class="k">composite:</span> ${esc(w.reasoning.formula)}` });
+  return blocks;
+}
+
+function stream(blocks, header) {
+  if (typer) clearInterval(typer);
+  terminal.innerHTML = header ? `<div class="log-block"><span class="ts">[${stamp()}]</span> ${header}</div>` : '';
+  let i = 0;
+  const tick = () => {
+    if (i >= blocks.length) { clearInterval(typer); typer = null;
+      terminal.insertAdjacentHTML('beforeend', '<div class="muted">— end of log —<span class="cursor"></span></div>');
+      return; }
+    const b = blocks[i++];
+    terminal.insertAdjacentHTML('beforeend', `<div class="log-block ${b.band}">${b.html}</div>`);
+    terminal.parentElement.scrollTop = terminal.parentElement.scrollHeight;
+  };
+  tick();
+  typer = setInterval(tick, 260);
+}
+
+function streamWork(w) {
+  stream(workBlocks(w), `stream: work ${esc(w.work_id)} — ${esc(w.mp_name)}`);
+}
+
+tailBtn.onclick = () => {
+  const rows = filtered().filter(w => w.alerts.length);
+  if (!rows.length) { stream([], 'no alerts for the current filter'); return; }
+  const blocks = [];
+  rows.forEach(w => w.alerts.forEach(a => blocks.push({ band: a.severity, html:
+`[${stamp()}] <span class="lvl ${a.severity}">ALERT: ${a.severity.toUpperCase()} RISK</span> — Work ID: ${esc(w.work_id)}
+  <span class="k">Reason:</span> ${esc(a.reason)}
+  <span class="k">MP:</span> ${esc(w.mp_name)}, <span class="k">Constituency:</span> ${esc(w.constituency)}
+  <span class="k">Amount:</span> ${L(w.amount)}, <span class="k">Vendor:</span> ${esc(w.vendor)}
+  <span class="k">Risk:</span> ${w.risk_score.toFixed(3)} (${w.risk_band}) — ${esc(w.reasoning.formula)}` })));
+  stream(blocks, `tailing ${blocks.length} alerts across ${rows.length} works`);
+};
+</script>
+</body>
+</html>
